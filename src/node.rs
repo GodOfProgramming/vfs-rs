@@ -1,40 +1,37 @@
 use crate::{IdentKey, Relationship, Vfs};
 use petgraph::graph::NodeIndex;
-use smartstring::{Compact, SmartString};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct VfsNode {
     pub(crate) ident: IdentKey,
     pub(crate) index: NodeIndex,
-
-    pub(crate) name: SmartString<Compact>,
 }
 
 impl VfsNode {
     pub fn has_parent<T>(&self, vfs: &Vfs<T>) -> bool {
         vfs.inner
             .edges(self.index)
-            .any(|e| matches!(e.weight(), Relationship::Parent(_)))
+            .any(|e| matches!(e.weight(), Relationship::Parent { .. }))
     }
 
     pub fn parent<'v, T>(&self, vfs: &'v Vfs<T>) -> Option<&'v Self> {
         vfs.inner.edges(self.index).find_map(|e| {
-            if let Relationship::Parent(path) = e.weight() {
-                Some(path)
+            if let Relationship::Parent { node } = e.weight() {
+                Some(node)
             } else {
                 None
             }
         })
     }
 
-    pub fn lineage<'t, T>(&self, vfs: &'t Vfs<T>) -> Option<Vec<&'t str>> {
+    pub fn lineage<'v, T>(&self, vfs: &'v Vfs<T>) -> Option<Vec<&'v str>> {
         std::iter::successors(Some(self), |p| p.parent(vfs))
             .map(|p| vfs.ident_of(p).map(|p| p.as_ref().as_str()))
             .collect::<Option<Vec<_>>>()
     }
 
-    pub fn basename(&self) -> &str {
-        self.name.as_str()
+    pub fn basename<'v, T>(&self, vfs: &'v Vfs<T>) -> Option<&'v str> {
+        vfs.ident_of(self).map(|i| i.as_str())
     }
 
     pub fn absolute<T>(&self, vfs: &Vfs<T>) -> Option<String> {
@@ -51,5 +48,9 @@ impl VfsNode {
                 itertools::join(&lineage[1..], "/")
             )),
         }
+    }
+
+    pub fn iter<T>(self, vfs: &Vfs<T>) -> impl Iterator<Item = Self> {
+        vfs.ls(self)
     }
 }

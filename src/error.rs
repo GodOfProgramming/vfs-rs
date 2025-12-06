@@ -7,4 +7,6 @@ pub type VfsResult<T = ()> = Result<T, VfsError>;
 pub enum VfsError {
     #[error("The item at this path already exists")]
     ItemAlreadyExists(VfsNode),
+    #[error("Only directories can have children")]
+    InvalidParent(VfsNode),
 }

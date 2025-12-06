@@ -9,15 +9,14 @@ pub use crate::{
 };
 
 use bimap::BiHashMap;
+use derive_enum_accessors::EnumFieldAccessors;
 use itertools::{FoldWhile, Itertools};
 use petgraph::{Graph, visit::EdgeRef};
 use prehash::{DefaultPrehasher, Passthru, Prehashed, Prehasher};
 use smartstring::{Compact, SmartString};
 use std::{
-    borrow::Borrow,
     fmt::Debug,
     hash::{BuildHasherDefault, Hash},
-    ops::Deref,
 };
 
 type Ident = Prehashed<SmartString<Compact>>;
@@ -48,7 +47,6 @@ impl<T> Default for Vfs<T> {
             root: VfsNode {
                 ident: root_key,
                 index: root_index,
-                name: SmartString::from("/"),
             },
             idents,
             hasher,
@@ -61,43 +59,45 @@ impl<T> Vfs<T> {
         Self::default()
     }
 
-    pub fn root(&self) -> &VfsNode {
-        &self.root
+    pub fn root(&self) -> VfsNode {
+        self.root
     }
 
-    pub fn find_absolute(&self, path: impl AsRef<str>) -> Option<&VfsNode> {
-        self.inner.edge_weights().find_map(|edge| match edge {
-            Relationship::Parent(_) => None,
-            Relationship::Child(vfs_path) => vfs_path.absolute(self).and_then(|ap| {
-                if ap == path.as_ref() {
-                    Some(vfs_path)
+    pub fn find_absolute(&self, path: impl AsRef<str>) -> Option<VfsNode> {
+        self.inner
+            .edge_references()
+            .find_map(|edge| match edge.weight() {
+                Relationship::Parent { .. } => None,
+                Relationship::Child { node } => node.absolute(self).and_then(|ap| {
+                    if ap == path.as_ref() {
+                        Some(*node)
+                    } else {
+                        None
+                    }
+                }),
+            })
+    }
+
+    pub fn ls(&self, node: VfsNode) -> impl Iterator<Item = VfsNode> {
+        self.inner
+            .edges(node.index)
+            .map(|e| e.weight())
+            .cloned()
+            .filter_map(|relationship| {
+                if let Relationship::Child { node } = relationship {
+                    Some(node)
                 } else {
                     None
                 }
-            }),
-        })
+            })
     }
 
-    pub fn ls(&self, path: impl Borrow<VfsNode>) -> impl Iterator<Item = &VfsNode> {
-        self.inner.edges(path.borrow().index).filter_map(|e| {
-            if let Relationship::Child(dir) = e.weight() {
-                Some(dir)
-            } else {
-                None
-            }
-        })
-    }
-
-    pub fn lookup(
-        &self,
-        path: impl Borrow<VfsNode>,
-        name: impl AsRef<str>,
-    ) -> Option<(&VfsNode, &VfsEntry<T>)> {
+    pub fn lookup(&self, node: VfsNode, name: impl AsRef<str>) -> Option<(VfsNode, &VfsEntry<T>)> {
         let name = self.hasher.prehash(SmartString::from(name.as_ref()));
-        self.inner.edges(path.borrow().index).find_map(|e| {
-            self.ident_of(e.weight()).and_then(|ident| {
+        self.inner.edges(node.index).find_map(|e| {
+            self.ident_of(e.weight().node()).and_then(|ident| {
                 if Prehashed::fast_eq(ident, &name) {
-                    Some(e.weight().deref()).zip(self.inner.node_weight(e.target()))
+                    Some(*e.weight().node()).zip(self.inner.node_weight(e.target()))
                 } else {
                     None
                 }
@@ -105,25 +105,17 @@ impl<T> Vfs<T> {
         })
     }
 
-    pub fn lookup_path(
-        &self,
-        path: impl Borrow<VfsNode>,
-        name: impl AsRef<str>,
-    ) -> Option<&VfsNode> {
-        self.lookup(path, name.as_ref()).map(|(p, _)| p)
+    pub fn lookup_path(&self, node: VfsNode, name: impl AsRef<str>) -> Option<VfsNode> {
+        self.lookup(node, name.as_ref()).map(|(p, _)| p)
     }
 
-    pub fn lookup_node(
-        &self,
-        path: impl Borrow<VfsNode>,
-        name: impl AsRef<str>,
-    ) -> Option<&VfsEntry<T>> {
-        self.lookup(path, name.as_ref()).map(|(_, n)| n)
+    pub fn lookup_node(&self, node: VfsNode, name: impl AsRef<str>) -> Option<&VfsEntry<T>> {
+        self.lookup(node, name.as_ref()).map(|(_, n)| n)
     }
 
     pub fn new_item(
         &mut self,
-        dir: impl Borrow<VfsNode>,
+        dir: VfsNode,
         name: impl Into<SmartString<Compact>> + AsRef<str>,
         item: T,
     ) -> VfsResult<VfsNode> {
@@ -132,18 +124,18 @@ impl<T> Vfs<T> {
 
     pub fn new_dir(
         &mut self,
-        path: impl Borrow<VfsNode>,
+        node: VfsNode,
         name: impl Into<SmartString<Compact>> + AsRef<str>,
     ) -> VfsResult<VfsNode> {
-        self.mkdir(path, name)
+        self.mkdir(node, name)
     }
 
     pub fn mkdir(
         &mut self,
-        path: impl Borrow<VfsNode>,
+        node: VfsNode,
         name: impl Into<SmartString<Compact>> + AsRef<str>,
     ) -> VfsResult<VfsNode> {
-        self.new_node(path, name, VfsEntry::Dir)
+        self.new_node(node, name, VfsEntry::Dir)
     }
 
     /// Not very efficient due to lifetimes
@@ -151,9 +143,9 @@ impl<T> Vfs<T> {
     where
         N: Into<SmartString<Compact>> + AsRef<str>,
     {
-        let root = self.root().clone();
+        let root = self.root();
         path.fold_while(Ok(root), |prev, next| match prev {
-            Ok(prev) => match self.new_node(&prev, next, VfsEntry::Dir) {
+            Ok(prev) => match self.new_node(prev, next, VfsEntry::Dir) {
                 Ok(next) => FoldWhile::Continue(Ok(next)),
                 e => FoldWhile::Done(e),
             },
@@ -166,67 +158,67 @@ impl<T> Vfs<T> {
         self.inner.remove_node(path.index)
     }
 
-    pub fn read(&self, path: &VfsNode) -> Option<&VfsEntry<T>> {
-        self.inner.node_weight(path.index)
+    pub fn read(&self, node: VfsNode) -> Option<&VfsEntry<T>> {
+        self.inner.node_weight(node.index)
     }
 
-    pub fn write(&mut self, path: &VfsNode) -> Option<&mut VfsEntry<T>> {
-        self.inner.node_weight_mut(path.index)
-    }
-
-    pub fn iter(&self, path: &VfsNode) -> impl Iterator<Item = &VfsNode> {
-        self.ls(path)
+    pub fn write(&mut self, node: VfsNode) -> Option<&mut VfsEntry<T>> {
+        self.inner.node_weight_mut(node.index)
     }
 
     fn add_child(
         &mut self,
-        parent: &VfsNode,
+        parent_node: VfsNode,
         child_name: SmartString<Compact>,
         node: VfsEntry<T>,
-    ) -> &VfsNode {
+    ) -> VfsResult<VfsNode> {
+        if let Some(parent_entry) = self.read(parent_node)
+            && !parent_entry.is_dir()
+        {
+            return Err(VfsError::InvalidParent(parent_node));
+        }
+
         let child_index = self.inner.add_node(node);
 
-        let ident = Self::get_or_make_ident(&mut self.idents, &self.hasher, &child_name);
+        let ident = Self::get_or_make_ident(&mut self.idents, &self.hasher, child_name);
 
-        let path = VfsNode {
+        let child_node = VfsNode {
             ident,
-            name: child_name,
             index: child_index,
         };
 
-        let child_weight =
-            self.inner
-                .add_edge(parent.index, child_index, Relationship::Child(path));
+        self.inner.add_edge(
+            parent_node.index,
+            child_index,
+            Relationship::Child { node: child_node },
+        );
 
         self.inner.add_edge(
             child_index,
-            parent.index,
-            Relationship::Parent(parent.clone()),
+            parent_node.index,
+            Relationship::Parent { node: parent_node },
         );
 
-        self.inner
-            .edge_weight(child_weight)
-            .expect("Edge was just added")
+        Ok(child_node)
     }
 
     fn new_node(
         &mut self,
-        path: impl Borrow<VfsNode>,
+        node: VfsNode,
         name: impl Into<SmartString<Compact>> + AsRef<str>,
-        node: VfsEntry<T>,
+        entry: VfsEntry<T>,
     ) -> VfsResult<VfsNode> {
-        let path = path.borrow();
         let name = name.as_ref();
 
-        if let Some((child_path, child_node)) = self.lookup(path, name) {
-            if child_node.is_dir() && node.is_dir() {
-                return Ok(child_path.clone());
+        if let Some((child_path, child_node)) = self.lookup(node, name) {
+            if child_node.is_dir() && entry.is_dir() {
+                return Ok(child_path);
             } else {
-                return Err(VfsError::ItemAlreadyExists(child_path.clone()));
+                return Err(VfsError::ItemAlreadyExists(child_path));
             }
         }
 
-        Ok(self.add_child(path, name.into(), node).clone())
+        self.add_child(node, name.into(), entry)
     }
 
     fn ident_of(&self, node: &VfsNode) -> Option<&Ident> {
@@ -247,23 +239,14 @@ impl<T> Vfs<T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(EnumFieldAccessors, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Relationship {
     /// This edge points to the node's parent
-    Parent(VfsNode),
+    /// child (source) -> parent (target)
+    Parent { node: VfsNode },
     /// This edge points to one of a node's children
-    Child(VfsNode),
-}
-
-impl Deref for Relationship {
-    type Target = VfsNode;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Relationship::Parent(vfs_path) => vfs_path,
-            Relationship::Child(vfs_path) => vfs_path,
-        }
-    }
+    /// parent (source) -> children (target)
+    Child { node: VfsNode },
 }
 
 #[cfg(test)]
@@ -273,11 +256,11 @@ mod tests {
     #[test]
     fn can_add_item_to_vfs() {
         let mut vfs = Vfs::new();
-        let root = vfs.root().clone();
+        let root = vfs.root();
         let child = vfs
             .new_item(root, "child", 1)
             .expect("root dir should be empty");
-        let entry = vfs.read(&child).expect("child was just added");
+        let entry = vfs.read(child).expect("child was just added");
         let value = entry.value().expect("entry should be an item");
         assert_eq!(*value, 1);
     }
@@ -285,21 +268,21 @@ mod tests {
     #[test]
     fn can_add_dir_to_vfs() {
         let mut vfs = Vfs::<()>::new();
-        let root = vfs.root().clone();
+        let root = vfs.root();
         let child = vfs.mkdir(root, "dir").expect("root should be empty");
-        let entry = vfs.read(&child).expect("child was just made");
+        let entry = vfs.read(child).expect("child was just made");
         assert!(entry.is_dir(), "entry should be a directory");
     }
 
     #[test]
     fn can_add_item_to_dir() {
         let mut vfs = Vfs::new();
-        let root = vfs.root().clone();
+        let root = vfs.root();
         let child_dir = vfs.mkdir(root, "dir").expect("root should be empty");
         let grandchild_item = vfs
             .new_item(child_dir, "item", 1)
             .expect("new dir should be empty");
-        let entry = vfs.read(&grandchild_item).expect("child was just added");
+        let entry = vfs.read(grandchild_item).expect("child was just added");
         let value = *entry.value().expect("entry should be an item");
 
         let root = vfs.root();
@@ -316,7 +299,7 @@ mod tests {
     fn can_resolve_full_paths() {
         let mut vfs = Vfs::new();
 
-        let root = vfs.root().clone();
+        let root = vfs.root();
         let child_dir = vfs.mkdir(root, "dir").expect("root should be empty");
         let grandchild_item = vfs
             .new_item(child_dir, "item", 1)
