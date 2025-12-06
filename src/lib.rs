@@ -2,7 +2,7 @@ pub mod error;
 pub mod node;
 pub mod path;
 
-use crate::{
+pub use crate::{
     error::{VfsError, VfsResult},
     node::VfsNode,
     path::VfsPath,
@@ -43,12 +43,11 @@ impl<T> Vfs<T> {
         &self.root
     }
 
-    pub fn find(&self, path: impl Borrow<SmartString<Compact>>) -> Option<&VfsPath> {
-        let path = path.borrow();
+    pub fn find(&self, path: impl AsRef<str>) -> Option<&VfsPath> {
         self.inner.edge_weights().find_map(|edge| match edge {
             Relationship::Parent(_) => None,
             Relationship::Child(vfs_path) => {
-                if vfs_path.cached == *path {
+                if vfs_path.cached == path.as_ref() {
                     Some(vfs_path)
                 } else {
                     None
