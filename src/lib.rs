@@ -95,7 +95,7 @@ impl<T> Vfs<T> {
     pub fn lookup(&self, node: VfsNode, name: impl AsRef<str>) -> Option<(VfsNode, &VfsEntry<T>)> {
         let name = self.hasher.prehash(SmartString::from(name.as_ref()));
         self.inner.edges(node.index).find_map(|e| {
-            self.ident_of(e.weight().node()).and_then(|ident| {
+            self.ident_of(*e.weight().node()).and_then(|ident| {
                 if Prehashed::fast_eq(ident, &name) {
                     Some(*e.weight().node()).zip(self.inner.node_weight(e.target()))
                 } else {
@@ -221,7 +221,7 @@ impl<T> Vfs<T> {
         self.add_child(node, name.into(), entry)
     }
 
-    fn ident_of(&self, node: &VfsNode) -> Option<&Ident> {
+    fn ident_of(&self, node: VfsNode) -> Option<&Ident> {
         self.idents.get_by_left(&node.ident)
     }
 

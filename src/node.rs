@@ -8,33 +8,33 @@ pub struct VfsNode {
 }
 
 impl VfsNode {
-    pub fn has_parent<T>(&self, vfs: &Vfs<T>) -> bool {
+    pub fn has_parent<T>(self, vfs: &Vfs<T>) -> bool {
         vfs.inner
             .edges(self.index)
             .any(|e| matches!(e.weight(), Relationship::Parent { .. }))
     }
 
-    pub fn parent<'v, T>(&self, vfs: &'v Vfs<T>) -> Option<&'v Self> {
+    pub fn parent<T>(self, vfs: &Vfs<T>) -> Option<Self> {
         vfs.inner.edges(self.index).find_map(|e| {
             if let Relationship::Parent { node } = e.weight() {
-                Some(node)
+                Some(*node)
             } else {
                 None
             }
         })
     }
 
-    pub fn lineage<'v, T>(&self, vfs: &'v Vfs<T>) -> Option<Vec<&'v str>> {
+    pub fn lineage<'v, T>(self, vfs: &'v Vfs<T>) -> Option<Vec<&'v str>> {
         std::iter::successors(Some(self), |p| p.parent(vfs))
             .map(|p| vfs.ident_of(p).map(|p| p.as_ref().as_str()))
             .collect::<Option<Vec<_>>>()
     }
 
-    pub fn basename<'v, T>(&self, vfs: &'v Vfs<T>) -> Option<&'v str> {
+    pub fn basename<'v, T>(self, vfs: &'v Vfs<T>) -> Option<&'v str> {
         vfs.ident_of(self).map(|i| i.as_str())
     }
 
-    pub fn absolute<T>(&self, vfs: &Vfs<T>) -> Option<String> {
+    pub fn absolute<T>(self, vfs: &Vfs<T>) -> Option<String> {
         let mut lineage = self.lineage(vfs)?;
 
         lineage.reverse();
