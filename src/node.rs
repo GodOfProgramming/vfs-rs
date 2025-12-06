@@ -1,22 +1,16 @@
-use crate::{Relationship, Vfs};
-use camino::Utf8PathBuf;
+use crate::{IdentKey, Relationship, Vfs};
 use petgraph::graph::NodeIndex;
 use smartstring::{Compact, SmartString};
-use std::cmp::Ordering;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct VfsNode {
-    pub(crate) cached: SmartString<Compact>,
-    pub(crate) name: SmartString<Compact>,
-    pub(crate) inner: Utf8PathBuf,
+    pub(crate) ident: IdentKey,
     pub(crate) index: NodeIndex,
+
+    pub(crate) name: SmartString<Compact>,
 }
 
 impl VfsNode {
-    pub fn join(&self, name: impl AsRef<str>) -> Utf8PathBuf {
-        self.inner.join(name.as_ref())
-    }
-
     pub fn has_parent<T>(&self, vfs: &Vfs<T>) -> bool {
         vfs.inner
             .edges(self.index)
@@ -33,27 +27,29 @@ impl VfsNode {
         })
     }
 
-    pub fn full_path(&self) -> &str {
-        &self.cached
-    }
-
-    pub fn display(&self) -> &str {
-        self.cached.as_str()
+    pub fn lineage<'t, T>(&self, vfs: &'t Vfs<T>) -> Option<Vec<&'t str>> {
+        std::iter::successors(Some(self), |p| p.parent(vfs))
+            .map(|p| vfs.ident_of(p).map(|p| p.as_ref().as_str()))
+            .collect::<Option<Vec<_>>>()
     }
 
     pub fn basename(&self) -> &str {
         self.name.as_str()
     }
-}
 
-impl PartialOrd for VfsNode {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
+    pub fn absolute<T>(&self, vfs: &Vfs<T>) -> Option<String> {
+        let mut lineage = self.lineage(vfs)?;
 
-impl Ord for VfsNode {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.cached.cmp(&other.cached)
+        lineage.reverse();
+
+        match lineage.len() {
+            0 => None,
+            1 => Some(lineage[0].to_string()),
+            _ => Some(format!(
+                "{}{}",
+                lineage[0],
+                itertools::join(&lineage[1..], "/")
+            )),
+        }
     }
 }

@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 bimap = "0.6.3"
-camino = "1.2"
 derive_enum_accessors = "0.1.0"
 itertools = "0.14.0"
 petgraph = "0.8.3"
