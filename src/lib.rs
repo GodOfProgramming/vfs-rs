@@ -1,11 +1,11 @@
 pub mod entry;
 pub mod error;
-pub mod path;
+pub mod node;
 
 pub use crate::{
     entry::VfsEntry,
     error::{VfsError, VfsResult},
-    path::VfsPath,
+    node::VfsNode,
 };
 use camino::Utf8PathBuf;
 use itertools::{FoldWhile, Itertools};
@@ -15,7 +15,7 @@ use std::{borrow::Borrow, fmt::Debug, hash::Hash, ops::Deref};
 
 pub struct Vfs<T> {
     inner: Graph<VfsEntry<T>, Relationship>,
-    root: VfsPath,
+    root: VfsNode,
 }
 
 impl<T> Default for Vfs<T> {
@@ -24,7 +24,7 @@ impl<T> Default for Vfs<T> {
         let root_index = graph.add_node(VfsEntry::Dir);
         Self {
             inner: graph,
-            root: VfsPath {
+            root: VfsNode {
                 cached: SmartString::from("/"),
                 name: SmartString::from("/"),
                 inner: Utf8PathBuf::from("/"),
@@ -39,11 +39,11 @@ impl<T> Vfs<T> {
         Self::default()
     }
 
-    pub fn root(&self) -> &VfsPath {
+    pub fn root(&self) -> &VfsNode {
         &self.root
     }
 
-    pub fn find(&self, path: impl AsRef<str>) -> Option<&VfsPath> {
+    pub fn find(&self, path: impl AsRef<str>) -> Option<&VfsNode> {
         self.inner.edge_weights().find_map(|edge| match edge {
             Relationship::Parent(_) => None,
             Relationship::Child(vfs_path) => {
@@ -56,7 +56,7 @@ impl<T> Vfs<T> {
         })
     }
 
-    pub fn ls(&self, path: impl Borrow<VfsPath>) -> impl Iterator<Item = &VfsPath> {
+    pub fn ls(&self, path: impl Borrow<VfsNode>) -> impl Iterator<Item = &VfsNode> {
         self.inner.edges(path.borrow().index).filter_map(|e| {
             if let Relationship::Child(dir) = e.weight() {
                 Some(dir)
@@ -68,9 +68,9 @@ impl<T> Vfs<T> {
 
     pub fn lookup(
         &self,
-        path: impl Borrow<VfsPath>,
+        path: impl Borrow<VfsNode>,
         name: impl AsRef<str>,
-    ) -> Option<(&VfsPath, &VfsEntry<T>)> {
+    ) -> Option<(&VfsNode, &VfsEntry<T>)> {
         self.inner.edges(path.borrow().index).find_map(|e| {
             if e.weight().name == name.as_ref() {
                 Some(e.weight().deref()).zip(self.inner.node_weight(e.target()))
@@ -82,15 +82,15 @@ impl<T> Vfs<T> {
 
     pub fn lookup_path(
         &self,
-        path: impl Borrow<VfsPath>,
+        path: impl Borrow<VfsNode>,
         name: impl AsRef<str>,
-    ) -> Option<&VfsPath> {
+    ) -> Option<&VfsNode> {
         self.lookup(path, name.as_ref()).map(|(p, _)| p)
     }
 
     pub fn lookup_node(
         &self,
-        path: impl Borrow<VfsPath>,
+        path: impl Borrow<VfsNode>,
         name: impl AsRef<str>,
     ) -> Option<&VfsEntry<T>> {
         self.lookup(path, name.as_ref()).map(|(_, n)| n)
@@ -98,31 +98,31 @@ impl<T> Vfs<T> {
 
     pub fn new_item(
         &mut self,
-        dir: impl Borrow<VfsPath>,
+        dir: impl Borrow<VfsNode>,
         name: impl Into<SmartString<Compact>> + AsRef<str>,
         item: T,
-    ) -> VfsResult<VfsPath> {
+    ) -> VfsResult<VfsNode> {
         self.new_node(dir, name, VfsEntry::Item { value: item })
     }
 
     pub fn new_dir(
         &mut self,
-        path: impl Borrow<VfsPath>,
+        path: impl Borrow<VfsNode>,
         name: impl Into<SmartString<Compact>> + AsRef<str>,
-    ) -> VfsResult<VfsPath> {
+    ) -> VfsResult<VfsNode> {
         self.mkdir(path, name)
     }
 
     pub fn mkdir(
         &mut self,
-        path: impl Borrow<VfsPath>,
+        path: impl Borrow<VfsNode>,
         name: impl Into<SmartString<Compact>> + AsRef<str>,
-    ) -> VfsResult<VfsPath> {
+    ) -> VfsResult<VfsNode> {
         self.new_node(path, name, VfsEntry::Dir)
     }
 
     /// Not very efficient due to lifetimes
-    pub fn mkdir_p<N>(&mut self, mut path: impl Iterator<Item = N>) -> VfsResult<VfsPath>
+    pub fn mkdir_p<N>(&mut self, mut path: impl Iterator<Item = N>) -> VfsResult<VfsNode>
     where
         N: Into<SmartString<Compact>> + AsRef<str>,
     {
@@ -137,32 +137,32 @@ impl<T> Vfs<T> {
         .into_inner()
     }
 
-    pub fn read(&self, path: &VfsPath) -> Option<&VfsEntry<T>> {
+    pub fn read(&self, path: &VfsNode) -> Option<&VfsEntry<T>> {
         self.inner.node_weight(path.index)
     }
 
-    pub fn write(&mut self, path: &VfsPath) -> Option<&mut VfsEntry<T>> {
+    pub fn write(&mut self, path: &VfsNode) -> Option<&mut VfsEntry<T>> {
         self.inner.node_weight_mut(path.index)
     }
 
-    pub fn rm(&mut self, path: &VfsPath) -> Option<VfsEntry<T>> {
+    pub fn rm(&mut self, path: &VfsNode) -> Option<VfsEntry<T>> {
         self.inner.remove_node(path.index)
     }
 
-    pub fn iter(&self, path: &VfsPath) -> impl Iterator<Item = &VfsPath> {
+    pub fn iter(&self, path: &VfsNode) -> impl Iterator<Item = &VfsNode> {
         self.ls(path)
     }
 
     fn add_child(
         &mut self,
-        parent: &VfsPath,
+        parent: &VfsNode,
         child_name: SmartString<Compact>,
         node: VfsEntry<T>,
-    ) -> &VfsPath {
+    ) -> &VfsNode {
         let child_path = parent.join(&child_name);
         let child_index = self.inner.add_node(node);
 
-        let path = VfsPath {
+        let path = VfsNode {
             name: child_name.clone(),
             cached: SmartString::from(child_path.to_string()),
             inner: child_path,
@@ -186,10 +186,10 @@ impl<T> Vfs<T> {
 
     fn new_node(
         &mut self,
-        path: impl Borrow<VfsPath>,
+        path: impl Borrow<VfsNode>,
         name: impl Into<SmartString<Compact>> + AsRef<str>,
         node: VfsEntry<T>,
-    ) -> VfsResult<VfsPath> {
+    ) -> VfsResult<VfsNode> {
         let path = path.borrow();
         let name = name.as_ref();
 
@@ -208,13 +208,13 @@ impl<T> Vfs<T> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Relationship {
     /// This edge points to the node's parent
-    Parent(VfsPath),
+    Parent(VfsNode),
     /// This edge points to one of a node's children
-    Child(VfsPath),
+    Child(VfsNode),
 }
 
 impl Deref for Relationship {
-    type Target = VfsPath;
+    type Target = VfsNode;
 
     fn deref(&self) -> &Self::Target {
         match self {

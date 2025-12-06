@@ -5,14 +5,14 @@ use smartstring::{Compact, SmartString};
 use std::cmp::Ordering;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct VfsPath {
+pub struct VfsNode {
     pub(crate) cached: SmartString<Compact>,
     pub(crate) name: SmartString<Compact>,
     pub(crate) inner: Utf8PathBuf,
     pub(crate) index: NodeIndex,
 }
 
-impl VfsPath {
+impl VfsNode {
     pub fn join(&self, name: impl AsRef<str>) -> Utf8PathBuf {
         self.inner.join(name.as_ref())
     }
@@ -46,13 +46,13 @@ impl VfsPath {
     }
 }
 
-impl PartialOrd for VfsPath {
+impl PartialOrd for VfsNode {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for VfsPath {
+impl Ord for VfsNode {
     fn cmp(&self, other: &Self) -> Ordering {
         self.cached.cmp(&other.cached)
     }
