@@ -2,12 +2,12 @@ use derive_enum_accessors::EnumFieldAccessors;
 use std::fmt::Debug;
 
 #[derive(EnumFieldAccessors)]
-pub enum VfsNode<T> {
+pub enum VfsEntry<T> {
     Dir,
     Item { value: T },
 }
 
-impl<T> VfsNode<T> {
+impl<T> VfsEntry<T> {
     pub fn is_item(&self) -> bool {
         matches!(self, Self::Item { .. })
     }
@@ -17,7 +17,7 @@ impl<T> VfsNode<T> {
     }
 }
 
-impl<T> Clone for VfsNode<T>
+impl<T> Clone for VfsEntry<T>
 where
     T: Clone,
 {
@@ -31,14 +31,14 @@ where
     }
 }
 
-impl<T> Debug for VfsNode<T>
+impl<T> Debug for VfsEntry<T>
 where
     T: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            VfsNode::Dir => f.debug_tuple(std::any::type_name::<Self>()).finish(),
-            VfsNode::Item { value } => f
+            VfsEntry::Dir => f.debug_tuple(std::any::type_name::<Self>()).finish(),
+            VfsEntry::Item { value } => f
                 .debug_struct(std::any::type_name::<Self>())
                 .field("value", value)
                 .finish(),
