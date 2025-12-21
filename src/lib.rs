@@ -119,6 +119,7 @@ impl<T> Vfs<T> {
                     }
                 })
             })
+            .unique()
             .collect()
     }
 
