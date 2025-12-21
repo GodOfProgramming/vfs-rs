@@ -105,6 +105,23 @@ impl<T> Vfs<T> {
         })
     }
 
+    pub fn search(&self, name: impl AsRef<str>) -> Vec<VfsNode> {
+        let search_str = name.as_ref().to_lowercase();
+        self.inner
+            .edge_weights()
+            .filter_map(|w| {
+                let node = *w.node();
+                self.ident_of(node).and_then(|ident| {
+                    if ident.to_lowercase().contains(&search_str) {
+                        Some(node)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect()
+    }
+
     pub fn lookup_path(&self, node: VfsNode, name: impl AsRef<str>) -> Option<VfsNode> {
         self.lookup(node, name.as_ref()).map(|(p, _)| p)
     }

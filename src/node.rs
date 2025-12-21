@@ -8,6 +8,10 @@ pub struct VfsNode {
 }
 
 impl VfsNode {
+    pub fn node_index(&self) -> NodeIndex {
+        self.index
+    }
+
     pub fn has_parent<T>(self, vfs: &Vfs<T>) -> bool {
         vfs.inner
             .edges(self.index)
