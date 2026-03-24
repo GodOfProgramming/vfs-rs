@@ -172,7 +172,7 @@ impl<T> Vfs<T> {
         .into_inner()
     }
 
-    pub fn rm(&mut self, path: &VfsNode) -> Option<VfsEntry<T>> {
+    pub fn rm(&mut self, path: VfsNode) -> Option<VfsEntry<T>> {
         self.inner.remove_node(path.index)
     }
 
