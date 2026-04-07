@@ -329,4 +329,21 @@ mod tests {
 
         assert_eq!(abs_path, "/dir/item");
     }
+
+    #[test]
+    fn can_remove_items() {
+        let mut vfs = Vfs::new();
+
+        let root = vfs.root();
+        let child_dir = vfs.mkdir(root, "dir").expect("root should be empty");
+        let grandchild_item = vfs
+            .new_item(child_dir, "item", 1)
+            .expect("new dir should be empty");
+
+        assert!(vfs.lookup(child_dir, "item").is_some());
+
+        assert!(vfs.rm(grandchild_item).is_some());
+
+        assert!(vfs.lookup(child_dir, "item").is_none());
+    }
 }
