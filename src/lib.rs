@@ -25,8 +25,14 @@ type IdentKey = Prehashed<usize>;
 type IdentMap =
     BiHashMap<IdentKey, Ident, BuildHasherDefault<Passthru>, BuildHasherDefault<Passthru>>;
 
+#[cfg(not(feature = "stability"))]
+type GraphType<N, E> = Graph<N, E>;
+
+#[cfg(feature = "stability")]
+type GraphType<N, E> = StableDiGraph<N, E>;
+
 pub struct Vfs<T> {
-    inner: StableGraph<VfsEntry<T>, Relationship>,
+    inner: GraphType<VfsEntry<T>, Relationship>,
     root: VfsNode,
 
     idents: IdentMap,
@@ -35,7 +41,7 @@ pub struct Vfs<T> {
 
 impl<T> Default for Vfs<T> {
     fn default() -> Self {
-        let mut graph = StableGraph::new();
+        let mut graph = GraphType::new();
         let mut idents = IdentMap::default();
 
         let hasher = DefaultPrehasher::new();
@@ -173,6 +179,7 @@ impl<T> Vfs<T> {
         .into_inner()
     }
 
+    #[cfg(feature = "stability")]
     pub fn rm(&mut self, path: VfsNode) -> Option<VfsEntry<T>> {
         self.inner.remove_node(path.index)
     }
@@ -410,6 +417,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "stability")]
     fn can_remove_items() {
         let mut vfs = Vfs::new();
 
@@ -427,6 +435,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "stability")]
     fn stability_test() {
         let mut vfs = Vfs::new();
 
