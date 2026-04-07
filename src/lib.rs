@@ -11,12 +11,13 @@ pub use crate::{
 use bimap::BiHashMap;
 use derive_enum_accessors::EnumFieldAccessors;
 use itertools::{FoldWhile, Itertools};
-use petgraph::{Graph, visit::EdgeRef};
+use petgraph::{prelude::*, visit::EdgeRef};
 use prehash::{DefaultPrehasher, Passthru, Prehashed, Prehasher};
 use smartstring::{Compact, SmartString};
 use std::{
     fmt::Debug,
     hash::{BuildHasherDefault, Hash},
+    ops::{Deref, DerefMut},
 };
 
 type Ident = Prehashed<SmartString<Compact>>;
@@ -25,7 +26,7 @@ type IdentMap =
     BiHashMap<IdentKey, Ident, BuildHasherDefault<Passthru>, BuildHasherDefault<Passthru>>;
 
 pub struct Vfs<T> {
-    inner: Graph<VfsEntry<T>, Relationship>,
+    inner: StableGraph<VfsEntry<T>, Relationship>,
     root: VfsNode,
 
     idents: IdentMap,
@@ -34,7 +35,7 @@ pub struct Vfs<T> {
 
 impl<T> Default for Vfs<T> {
     fn default() -> Self {
-        let mut graph = Graph::new();
+        let mut graph = StableGraph::new();
         let mut idents = IdentMap::default();
 
         let hasher = DefaultPrehasher::new();
@@ -64,18 +65,16 @@ impl<T> Vfs<T> {
     }
 
     pub fn find_absolute(&self, path: impl AsRef<str>) -> Option<VfsNode> {
-        self.inner
-            .edge_references()
-            .find_map(|edge| match edge.weight() {
-                Relationship::Parent { .. } => None,
-                Relationship::Child { node } => node.absolute(self).and_then(|ap| {
-                    if ap == path.as_ref() {
-                        Some(*node)
-                    } else {
-                        None
-                    }
-                }),
-            })
+        self.inner.edge_weights().find_map(|edge| match edge {
+            Relationship::Parent { .. } => None,
+            Relationship::Child { node } => node.absolute(self).and_then(|ap| {
+                if ap == path.as_ref() {
+                    Some(*node)
+                } else {
+                    None
+                }
+            }),
+        })
     }
 
     pub fn ls(&self, node: VfsNode) -> impl Iterator<Item = VfsNode> {
@@ -157,11 +156,13 @@ impl<T> Vfs<T> {
     }
 
     /// Not very efficient due to lifetimes
-    pub fn mkdir_p<N>(&mut self, mut path: impl Iterator<Item = N>) -> VfsResult<VfsNode>
+    pub fn mkdir_p<I, N>(&mut self, path: impl Into<VfsPath<I, N>>) -> VfsResult<VfsNode>
     where
+        I: Iterator<Item = N>,
         N: Into<SmartString<Compact>> + AsRef<str>,
     {
         let root = self.root();
+        let mut path = path.into();
         path.fold_while(Ok(root), |prev, next| match prev {
             Ok(prev) => match self.new_node(prev, next, VfsEntry::Dir) {
                 Ok(next) => FoldWhile::Continue(Ok(next)),
@@ -267,9 +268,87 @@ enum Relationship {
     Child { node: VfsNode },
 }
 
+pub struct VfsPath<I, S>(I)
+where
+    I: Iterator<Item = S>,
+    S: Into<SmartString<Compact>> + AsRef<str>;
+
+impl<I, S> Deref for VfsPath<I, S>
+where
+    I: Iterator<Item = S>,
+    S: Into<SmartString<Compact>> + AsRef<str>,
+{
+    type Target = I;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<I, S> DerefMut for VfsPath<I, S>
+where
+    I: Iterator<Item = S>,
+    S: Into<SmartString<Compact>> + AsRef<str>,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<I, S> IntoIterator for VfsPath<I, S>
+where
+    I: Iterator<Item = S>,
+    S: Into<SmartString<Compact>> + AsRef<str>,
+{
+    type Item = S;
+
+    type IntoIter = I;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0
+    }
+}
+
+impl<S, const C: usize> From<[S; C]> for VfsPath<std::array::IntoIter<S, C>, S>
+where
+    S: Into<SmartString<Compact>> + AsRef<str>,
+{
+    fn from(value: [S; C]) -> Self {
+        Self(value.into_iter())
+    }
+}
+
+impl<S> From<Vec<S>> for VfsPath<std::vec::IntoIter<S>, S>
+where
+    S: Into<SmartString<Compact>> + AsRef<str>,
+{
+    fn from(value: Vec<S>) -> Self {
+        Self(value.into_iter())
+    }
+}
+
+impl<'s> From<&'s str> for VfsPath<camino::Iter<'s>, &'s str> {
+    fn from(value: &'s str) -> Self {
+        let path = camino::Utf8Path::new(value);
+        let iter = path.into_iter();
+        Self(iter)
+    }
+}
+
+impl<I, S> From<I> for VfsPath<I, S>
+where
+    I: Iterator<Item = S>,
+    S: Into<SmartString<Compact>> + AsRef<str>,
+{
+    fn from(value: I) -> Self {
+        Self(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::Vfs;
+
+    use super::VfsPath;
 
     #[test]
     fn can_add_item_to_vfs() {
@@ -345,5 +424,72 @@ mod tests {
         assert!(vfs.rm(grandchild_item).is_some());
 
         assert!(vfs.lookup(child_dir, "item").is_none());
+    }
+
+    #[test]
+    fn stability_test() {
+        let mut vfs = Vfs::new();
+
+        let dir_a = "dir_a";
+        let dir_b = "dir_b";
+
+        let entry_a_name = "entry_a";
+        let entry_a = 0;
+        let entry_b_name = "entry_b";
+        let entry_b = 1;
+
+        // dir_a 1
+        {
+            let dir_a_node = vfs.mkdir_p([dir_a]).unwrap();
+
+            assert!(vfs.new_item(dir_a_node, entry_a_name, entry_a).is_ok());
+        }
+
+        // dir_b 1
+        {
+            let dir_b_node = vfs.mkdir_p([dir_a, dir_b]).unwrap();
+
+            assert!(vfs.new_item(dir_b_node, entry_b_name, entry_b).is_ok());
+        }
+
+        // dir_a 2
+        {
+            let dir_a_node = vfs.mkdir_p([dir_a]).unwrap();
+
+            let Err(crate::VfsError::ItemAlreadyExists(existing_item)) =
+                vfs.new_item(dir_a_node, entry_a_name, entry_a)
+            else {
+                panic!("item should already exist");
+            };
+
+            assert!(vfs.rm(existing_item).is_some());
+
+            assert!(vfs.new_item(dir_a_node, entry_a_name, entry_a).is_ok());
+        }
+
+        // dir_b 2
+        {
+            let dir_b_node = vfs.mkdir_p([dir_a, dir_b]).unwrap();
+
+            let Err(crate::VfsError::ItemAlreadyExists(existing_item)) =
+                vfs.new_item(dir_b_node, entry_b_name, entry_b)
+            else {
+                panic!("item should already exist");
+            };
+
+            assert!(vfs.rm(existing_item).is_some());
+
+            assert!(vfs.new_item(dir_b_node, entry_b_name, entry_b).is_ok());
+        }
+    }
+
+    #[test]
+    fn vfs_path_from_str() {
+        let path = VfsPath::from("hello/world");
+
+        let parts = Vec::from_iter(path.0);
+
+        assert_eq!(parts[0], "hello");
+        assert_eq!(parts[1], "world");
     }
 }
